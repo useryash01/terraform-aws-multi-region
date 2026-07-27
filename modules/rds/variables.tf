@@ -1,0 +1,35 @@
+variable "vpc_id" {
+  description = "VPC ID where the RDS instance will be deployed"
+  type        = string
+}
+
+variable "ecs_sg_id" {
+  description = "Security Group ID of the ECS instances"
+  type        = string
+}
+
+variable "private_subnet_1_id" {
+  description = "Private Subnet 1 ID"
+  type        = string
+}
+
+variable "private_subnet_2_id" {
+  description = "Private Subnet 2 ID"
+  type        = string
+}
+
+variable "db_password" {
+  description = "Password for the PostgreSQL database"
+  type        = string
+  sensitive   = true
+}
+
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
+}
+
+variable "common_tags" {
+  description = "Common tags applied to all resources"
+  type        = map(string)
+}
