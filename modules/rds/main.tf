@@ -67,7 +67,7 @@ resource "aws_db_instance" "postgres" {
     aws_security_group.rds_sg.id
   ]
 
-  backup_retention_period = 7
+  backup_retention_period = 0
 
   multi_az = false
 

@@ -81,9 +81,9 @@ data "aws_ssm_parameter" "ecs_ami" {
 
 resource "aws_launch_template" "ecs_template" {
 
-  name_prefix   = "${var.environment}-ecs-template-"
+  name_prefix = "${var.environment}-ecs-template-"
 
-  image_id      = data.aws_ssm_parameter.ecs_ami.value
+  image_id = data.aws_ssm_parameter.ecs_ami.value
 
   instance_type = "t3.micro"
 
