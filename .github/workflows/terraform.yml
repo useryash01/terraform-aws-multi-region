@@ -15,19 +15,28 @@ jobs:
     name: Terraform Checks
     runs-on: ubuntu-latest
 
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
 
-    - name: Terraform Format Check
-      run: terraform fmt -check -recursive
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::634737373070:role/GitHubActionsTerraformRole
+          aws-region: ap-south-1
 
-    - name: Terraform Init
-      run: terraform init
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
 
-    - name: Terraform Validate
-      run: terraform validate
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Validate
+        run: terraform validate
