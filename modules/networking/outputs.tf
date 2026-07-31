@@ -17,3 +17,8 @@ output "private_subnet_1_id" {
 output "private_subnet_2_id" {
   value = aws_subnet.private_2.id
 }
+
+output "vpc_flow_log_group" {
+  description = "CloudWatch Log Group name for VPC Flow Logs"
+  value       = aws_cloudwatch_log_group.vpc_flow_log.name
+}

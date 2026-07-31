@@ -4,6 +4,11 @@ resource "aws_ecs_cluster" "main" {
 
   name = "${var.environment}-ecs-cluster"
 
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+
   tags = merge(var.common_tags, {
     Name = "${var.environment}-ecs-cluster"
   })
@@ -12,7 +17,7 @@ resource "aws_ecs_cluster" "main" {
 resource "aws_ecs_task_definition" "app" {
 
   family                   = "${var.environment}-app"
-  network_mode             = "bridge"
+  network_mode             = "awsvpc"
   requires_compatibilities = ["EC2"]
 
   cpu    = "256"
@@ -59,6 +64,17 @@ resource "aws_ecs_service" "app_service" {
   deployment_minimum_healthy_percent = 50
   deployment_maximum_percent         = 200
 
+  network_configuration {
+    subnets = [
+      var.private_subnet_1_id,
+      var.private_subnet_2_id
+    ]
+
+    security_groups = [
+      var.ecs_sg_id
+    ]
+  }
+
   load_balancer {
 
     target_group_arn = var.target_group_arn
@@ -100,6 +116,21 @@ resource "aws_launch_template" "ecs_template" {
     security_groups = [
       var.ecs_sg_id
     ]
+  }
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+
+  block_device_mappings {
+    device_name = "/dev/xvda"
+
+    ebs {
+      encrypted   = true
+      volume_type = "gp3"
+    }
   }
 
   user_data = base64encode(<<EOF
@@ -150,6 +181,7 @@ resource "aws_cloudwatch_log_group" "ecs_logs" {
   name = "/ecs/${var.environment}"
 
   retention_in_days = 7
+  kms_key_id        = var.logs_kms_key_id
 
   tags = merge(var.common_tags, {
     Name = "/ecs/${var.environment}"

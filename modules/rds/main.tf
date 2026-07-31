@@ -7,7 +7,7 @@ resource "random_password" "db_password" {
 resource "aws_secretsmanager_secret" "db_secret" {
   name_prefix             = "${var.environment}-db-credentials-"
   description             = "PostgreSQL database credentials"
-  recovery_window_in_days = 0
+  recovery_window_in_days = 7
 }
 
 resource "aws_secretsmanager_secret_version" "db_secret_val" {
@@ -39,10 +39,10 @@ resource "aws_security_group" "rds_sg" {
   vpc_id      = var.vpc_id
 
   ingress {
-
-    from_port = 5432
-    to_port   = 5432
-    protocol  = "tcp"
+    description = "Allow PostgreSQL traffic from ECS instances"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
 
     security_groups = [
       var.ecs_sg_id
@@ -50,7 +50,7 @@ resource "aws_security_group" "rds_sg" {
   }
 
   egress {
-
+    description = "Allow all outbound traffic"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -60,6 +60,33 @@ resource "aws_security_group" "rds_sg" {
   tags = merge(var.common_tags, {
     Name = "${var.environment}-rds-sg"
   })
+}
+
+# --- IAM Role for RDS Enhanced Monitoring ---
+resource "aws_iam_role" "rds_monitoring_role" {
+  name = "${var.environment}-rds-monitoring-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+
+      Principal = {
+        Service = "monitoring.rds.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = merge(var.common_tags, {
+    Name = "${var.environment}-rds-monitoring-role"
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring_policy" {
+  role       = aws_iam_role.rds_monitoring_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
 
 resource "aws_db_instance" "postgres" {
@@ -75,6 +102,7 @@ resource "aws_db_instance" "postgres" {
   storage_type      = "gp3"
 
   storage_encrypted = true
+  kms_key_id        = var.rds_kms_key_id
 
   username = jsondecode(aws_secretsmanager_secret_version.db_secret_val.secret_string)["username"]
   password = jsondecode(aws_secretsmanager_secret_version.db_secret_val.secret_string)["password"]
@@ -87,13 +115,27 @@ resource "aws_db_instance" "postgres" {
     aws_security_group.rds_sg.id
   ]
 
-  backup_retention_period = 0
+  backup_retention_period = 7
 
-  multi_az = false
+  multi_az = true
 
-  deletion_protection = false
+  deletion_protection = true
 
   skip_final_snapshot = true
+
+  auto_minor_version_upgrade = true
+
+  iam_database_authentication_enabled = true
+
+  copy_tags_to_snapshot = true
+
+  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
+
+  performance_insights_enabled    = true
+  performance_insights_kms_key_id = var.rds_kms_key_id
+
+  monitoring_interval = 60
+  monitoring_role_arn = aws_iam_role.rds_monitoring_role.arn
 
   tags = merge(var.common_tags, {
     Name = "${var.environment}-postgres"

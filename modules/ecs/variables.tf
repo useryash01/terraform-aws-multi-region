@@ -52,3 +52,9 @@ variable "min_size" {
   description = "Minimum size of ECS host ASG scaling bounds"
   type        = number
 }
+
+variable "logs_kms_key_id" {
+  description = "KMS key ARN for encrypting CloudWatch log groups. If null, uses AWS-managed key."
+  type        = string
+  default     = null
+}

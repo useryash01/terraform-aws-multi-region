@@ -33,3 +33,9 @@ variable "instance_class" {
   description = "Instance size class for RDS PostgreSQL database"
   type        = string
 }
+
+variable "rds_kms_key_id" {
+  description = "KMS key ARN for RDS storage encryption and Performance Insights. If null, uses AWS-managed key."
+  type        = string
+  default     = null
+}

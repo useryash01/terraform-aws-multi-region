@@ -108,3 +108,28 @@ variable "rds_instance_class" {
   type        = string
   default     = "db.t3.micro"
 }
+
+# --- Security / Encryption Parameters ---
+variable "certificate_arn" {
+  description = "ACM certificate ARN for the ALB HTTPS listener"
+  type        = string
+  default     = ""
+}
+
+variable "alb_logs_bucket" {
+  description = "S3 bucket name for ALB access logs"
+  type        = string
+  default     = ""
+}
+
+variable "logs_kms_key_id" {
+  description = "KMS key ARN for encrypting CloudWatch log groups. If null, uses AWS-managed key."
+  type        = string
+  default     = null
+}
+
+variable "rds_kms_key_id" {
+  description = "KMS key ARN for RDS storage encryption and Performance Insights. If null, uses AWS-managed key."
+  type        = string
+  default     = null
+}

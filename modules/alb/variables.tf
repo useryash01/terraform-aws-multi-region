@@ -27,3 +27,15 @@ variable "common_tags" {
   description = "Common tags applied to all resources"
   type        = map(string)
 }
+
+variable "certificate_arn" {
+  description = "ACM certificate ARN for HTTPS listener"
+  type        = string
+  default     = ""
+}
+
+variable "alb_logs_bucket" {
+  description = "S3 bucket name for ALB access logs"
+  type        = string
+  default     = ""
+}

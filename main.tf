@@ -46,6 +46,8 @@ module "alb" {
   public_subnet_1_id = module.networking.public_subnet_1_id
   public_subnet_2_id = module.networking.public_subnet_2_id
   alb_sg_id          = module.security.alb_sg_id
+  certificate_arn    = var.certificate_arn
+  alb_logs_bucket    = var.alb_logs_bucket
 
   environment = var.environment
   common_tags = var.common_tags
@@ -59,6 +61,7 @@ module "ecs" {
   ecs_sg_id             = module.security.ecs_sg_id
   private_subnet_1_id   = module.networking.private_subnet_1_id
   private_subnet_2_id   = module.networking.private_subnet_2_id
+  logs_kms_key_id       = var.logs_kms_key_id
 
   instance_type    = var.ecs_instance_type
   desired_capacity = var.ecs_desired_capacity
@@ -77,6 +80,7 @@ module "rds" {
   private_subnet_1_id = module.networking.private_subnet_1_id
   private_subnet_2_id = module.networking.private_subnet_2_id
   instance_class      = var.rds_instance_class
+  rds_kms_key_id      = var.rds_kms_key_id
 
   environment = var.environment
   common_tags = var.common_tags

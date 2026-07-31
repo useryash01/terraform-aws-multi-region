@@ -16,7 +16,7 @@ resource "aws_subnet" "public_1" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = var.public_subnet_1
   availability_zone       = data.aws_availability_zones.available.names[0]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
 
   tags = merge(var.common_tags, {
     Name = "${var.environment}-public-subnet-1"
@@ -27,7 +27,7 @@ resource "aws_subnet" "public_2" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = var.public_subnet_2
   availability_zone       = data.aws_availability_zones.available.names[1]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false
 
   tags = merge(var.common_tags, {
     Name = "${var.environment}-public-subnet-2"
@@ -129,4 +129,79 @@ resource "aws_route_table_association" "private_assoc_1" {
 resource "aws_route_table_association" "private_assoc_2" {
   subnet_id      = aws_subnet.private_2.id
   route_table_id = aws_route_table.private_rt.id
+}
+
+# --- CKV2_AWS_19: Restrict default security group ---
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.main.id
+
+  tags = merge(var.common_tags, {
+    Name = "${var.environment}-default-sg-restricted"
+  })
+}
+
+# --- CKV2_AWS_11: VPC Flow Logs ---
+resource "aws_cloudwatch_log_group" "vpc_flow_log" {
+  name              = "/vpc/${var.environment}/flow-logs"
+  retention_in_days = 30
+
+  tags = merge(var.common_tags, {
+    Name = "${var.environment}-vpc-flow-logs"
+  })
+}
+
+resource "aws_iam_role" "vpc_flow_log_role" {
+  name = "${var.environment}-vpc-flow-log-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [{
+      Effect = "Allow"
+      Action = "sts:AssumeRole"
+
+      Principal = {
+        Service = "vpc-flow-logs.amazonaws.com"
+      }
+    }]
+  })
+
+  tags = merge(var.common_tags, {
+    Name = "${var.environment}-vpc-flow-log-role"
+  })
+}
+
+resource "aws_iam_role_policy" "vpc_flow_log_policy" {
+  name = "${var.environment}-vpc-flow-log-policy"
+  role = aws_iam_role.vpc_flow_log_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+
+    Statement = [{
+      Effect = "Allow"
+
+      Action = [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents",
+        "logs:DescribeLogGroups",
+        "logs:DescribeLogStreams"
+      ]
+
+      Resource = "*"
+    }]
+  })
+}
+
+resource "aws_flow_log" "vpc_flow_log" {
+  vpc_id               = aws_vpc.main.id
+  traffic_type         = "ALL"
+  log_destination      = aws_cloudwatch_log_group.vpc_flow_log.arn
+  log_destination_type = "cloud-watch-logs"
+  iam_role_arn         = aws_iam_role.vpc_flow_log_role.arn
+
+  tags = merge(var.common_tags, {
+    Name = "${var.environment}-vpc-flow-log"
+  })
 }
