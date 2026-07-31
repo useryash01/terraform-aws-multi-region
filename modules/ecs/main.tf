@@ -1,3 +1,5 @@
+data "aws_region" "current" {}
+
 resource "aws_ecs_cluster" "main" {
 
   name = "${var.environment}-ecs-cluster"
@@ -33,7 +35,7 @@ resource "aws_ecs_task_definition" "app" {
 
         options = {
           awslogs-group         = aws_cloudwatch_log_group.ecs_logs.name
-          awslogs-region        = "ap-south-1"
+          awslogs-region        = data.aws_region.current.name
           awslogs-stream-prefix = "ecs"
         }
       }

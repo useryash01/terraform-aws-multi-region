@@ -10,11 +10,28 @@ module "networking" {
   private_subnet_1 = "10.0.3.0/24"
   private_subnet_2 = "10.0.4.0/24"
 
-  az_1 = "${var.aws_region}a"
-  az_2 = "${var.aws_region}b"
-
   environment = var.environment
   common_tags = var.common_tags
+}
+
+module "networking_secondary" {
+  source = "./modules/networking"
+
+  providers = {
+    aws = aws.secondary
+  }
+
+  vpc_cidr = "172.16.0.0/16"
+
+  public_subnet_1 = "172.16.1.0/24"
+  public_subnet_2 = "172.16.2.0/24"
+
+  private_subnet_1 = "172.16.3.0/24"
+  private_subnet_2 = "172.16.4.0/24"
+
+  environment        = var.environment
+  common_tags        = var.common_tags
+  enable_nat_gateway = false
 }
 
 module "security" {
@@ -69,8 +86,6 @@ module "rds" {
 
   private_subnet_1_id = module.networking.private_subnet_1_id
   private_subnet_2_id = module.networking.private_subnet_2_id
-
-  db_password = var.db_password
 
   environment = var.environment
   common_tags = var.common_tags

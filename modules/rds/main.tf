@@ -1,3 +1,23 @@
+resource "random_password" "db_password" {
+  length           = 16
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
+resource "aws_secretsmanager_secret" "db_secret" {
+  name_prefix             = "${var.environment}-db-credentials-"
+  description             = "PostgreSQL database credentials"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "db_secret_val" {
+  secret_id = aws_secretsmanager_secret.db_secret.id
+  secret_string = jsonencode({
+    username = "postgres"
+    password = random_password.db_password.result
+  })
+}
+
 resource "aws_db_subnet_group" "main" {
 
   name = "${var.environment}-db-subnet-group"
@@ -56,8 +76,8 @@ resource "aws_db_instance" "postgres" {
 
   storage_encrypted = true
 
-  username = "postgres"
-  password = var.db_password
+  username = jsondecode(aws_secretsmanager_secret_version.db_secret_val.secret_string)["username"]
+  password = jsondecode(aws_secretsmanager_secret_version.db_secret_val.secret_string)["password"]
 
   publicly_accessible = false
 

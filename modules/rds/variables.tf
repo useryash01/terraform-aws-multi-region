@@ -18,11 +18,6 @@ variable "private_subnet_2_id" {
   type        = string
 }
 
-variable "db_password" {
-  description = "Password for the PostgreSQL database"
-  type        = string
-  sensitive   = true
-}
 
 variable "environment" {
   description = "Deployment environment"

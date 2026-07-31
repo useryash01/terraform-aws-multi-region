@@ -23,15 +23,6 @@ variable "private_subnet_2" {
   type        = string
 }
 
-variable "az_1" {
-  description = "Primary Availability Zone"
-  type        = string
-}
-
-variable "az_2" {
-  description = "Secondary Availability Zone"
-  type        = string
-}
 
 variable "environment" {
   description = "Deployment Environment"
@@ -41,4 +32,10 @@ variable "environment" {
 variable "common_tags" {
   description = "Common tags applied to all resources"
   type        = map(string)
+}
+
+variable "enable_nat_gateway" {
+  description = "Should be true if you want to provision a NAT Gateway"
+  type        = bool
+  default     = true
 }
