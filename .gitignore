@@ -19,3 +19,21 @@ terraform.tfvars
 # Keys
 *.pem
 *.key
+
+# TFLint local cache
+.tflint.d/
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Plans and tfstate locks
+*.tfplan
+.terraform.tfstate.lock.info
+
+# Environment variables
+.env
+.env.*
+

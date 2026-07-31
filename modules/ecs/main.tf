@@ -87,7 +87,7 @@ resource "aws_launch_template" "ecs_template" {
 
   image_id = data.aws_ssm_parameter.ecs_ami.value
 
-  instance_type = "t3.micro"
+  instance_type = var.instance_type
 
   iam_instance_profile {
     name = var.instance_profile_name
@@ -115,9 +115,9 @@ EOF
 
 resource "aws_autoscaling_group" "ecs_asg" {
 
-  desired_capacity = 2
-  max_size         = 4
-  min_size         = 2
+  desired_capacity = var.desired_capacity
+  max_size         = var.max_size
+  min_size         = var.min_size
 
   health_check_type = "EC2"
 

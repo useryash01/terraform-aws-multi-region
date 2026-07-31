@@ -108,21 +108,44 @@ graph TD
 
 ## ⚙️ Configuration & Deploying
 
-### Prerequisites
-* Terraform `v1.6.0` or higher.
-* AWS Account with the OIDC identity provider (`token.actions.githubusercontent.com`) configured.
-* An IAM Role named `GitHubActionsTerraformRole` with an appropriate trust policy.
+### 📂 Multi-Environment Structure
+We manage environments using a unified codebase and separate `.tfvars` input files located in the `environments/` directory:
 
-### Local Initialization & Validation
-Initialize the project without backend access for local testing:
-```bash
-terraform init -backend=false
-terraform validate
+```
+environments/
+  ├── dev.tfvars   # Low-cost developer configurations (e.g. NAT Gateway disabled, 1 instance)
+  ├── test.tfvars  # Staging size checks (NAT Gateway enabled, small instances)
+  └── prod.tfvars  # High availability setup (NAT Gateway enabled, m5 database sizes)
 ```
 
-For real deployment runs:
+### 🗃️ State Segregation (Terraform Workspaces)
+To prevent environments from overwriting each other's state, use **Terraform Workspaces**. This prefixes S3 bucket keys automatically (e.g., `env:/dev/terraform-aws-multi-region/terraform.tfstate`).
+
+To initialize and switch workspaces locally:
 ```bash
+# 1. Initialize backend
 terraform init
-terraform plan
-terraform apply
+
+# 2. Create and switch to environment workspace
+terraform workspace new dev   # (Only once)
+terraform workspace select dev # (Subsequent runs)
 ```
+
+### 📋 Running Environments Locally
+Execute planning and validation checks passing the targeted environment variables file:
+
+```bash
+# Developer Sandbox (dev)
+terraform plan -var-file="environments/dev.tfvars"
+
+# Staging Environment (test)
+terraform plan -var-file="environments/test.tfvars"
+
+# Production Environment (prod)
+terraform plan -var-file="environments/prod.tfvars"
+```
+
+### 🚀 Running Environments in CI
+The GitHub Actions workflow supports:
+1. **Automated Pull Requests**: Automatically runs format audits, TFLint check rules, Checkov static analysis scans, and planning dry-runs defaulting against the `dev` environment configurations.
+2. **Manual Target Planning (`workflow_dispatch`)**: Triggered manually from the **Actions** tab of your repository. You can choose the targeted environment (`dev`, `test`, `prod`) from a drop-down menu parameters input before starting the validation runner.

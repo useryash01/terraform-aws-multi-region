@@ -32,3 +32,23 @@ variable "common_tags" {
   description = "Common tags"
   type        = map(string)
 }
+
+variable "instance_type" {
+  description = "EC2 instance size for the ECS cluster hosts"
+  type        = string
+}
+
+variable "desired_capacity" {
+  description = "Desired number of running ECS host instances"
+  type        = number
+}
+
+variable "max_size" {
+  description = "Maximum size of ECS host ASG scaling bounds"
+  type        = number
+}
+
+variable "min_size" {
+  description = "Minimum size of ECS host ASG scaling bounds"
+  type        = number
+}

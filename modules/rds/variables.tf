@@ -28,3 +28,8 @@ variable "common_tags" {
   description = "Common tags applied to all resources"
   type        = map(string)
 }
+
+variable "instance_class" {
+  description = "Instance size class for RDS PostgreSQL database"
+  type        = string
+}

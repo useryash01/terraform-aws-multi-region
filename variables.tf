@@ -5,16 +5,106 @@ variable "aws_region" {
 }
 
 variable "environment" {
-  description = "Deployment environment"
+  description = "Deployment environment name (e.g. dev, test, prod)"
   type        = string
-  default     = "dev"
 }
 
 variable "common_tags" {
   description = "Common tags applied to all resources"
   type        = map(string)
-  default = {
-    Environment = "dev"
-    ManagedBy   = "Terraform"
-  }
+}
+
+# --- Networking Parameters ---
+variable "vpc_cidr_primary" {
+  description = "VPC CIDR block for primary region"
+  type        = string
+}
+
+variable "public_subnet_1_primary" {
+  description = "Public subnet 1 CIDR for primary region"
+  type        = string
+}
+
+variable "public_subnet_2_primary" {
+  description = "Public subnet 2 CIDR for primary region"
+  type        = string
+}
+
+variable "private_subnet_1_primary" {
+  description = "Private subnet 1 CIDR for primary region"
+  type        = string
+}
+
+variable "private_subnet_2_primary" {
+  description = "Private subnet 2 CIDR for primary region"
+  type        = string
+}
+
+variable "enable_nat_gateway_primary" {
+  description = "Enable NAT gateway for primary region"
+  type        = bool
+  default     = true
+}
+
+variable "vpc_cidr_secondary" {
+  description = "VPC CIDR block for secondary region"
+  type        = string
+}
+
+variable "public_subnet_1_secondary" {
+  description = "Public subnet 1 CIDR for secondary region"
+  type        = string
+}
+
+variable "public_subnet_2_secondary" {
+  description = "Public subnet 2 CIDR for secondary region"
+  type        = string
+}
+
+variable "private_subnet_1_secondary" {
+  description = "Private subnet 1 CIDR for secondary region"
+  type        = string
+}
+
+variable "private_subnet_2_secondary" {
+  description = "Private subnet 2 CIDR for secondary region"
+  type        = string
+}
+
+variable "enable_nat_gateway_secondary" {
+  description = "Enable NAT gateway for secondary region"
+  type        = bool
+  default     = false
+}
+
+# --- ECS Parameters ---
+variable "ecs_instance_type" {
+  description = "EC2 instance size for the ECS cluster hosts"
+  type        = string
+  default     = "t3.micro"
+}
+
+variable "ecs_desired_capacity" {
+  description = "Desired number of running ECS host instances"
+  type        = number
+  default     = 2
+}
+
+variable "ecs_max_size" {
+  description = "Maximum size of ECS host ASG scaling bounds"
+  type        = number
+  default     = 4
+}
+
+variable "ecs_min_size" {
+  description = "Minimum size of ECS host ASG scaling bounds"
+  type        = number
+  default     = 2
+}
+
+# --- RDS Parameters ---
+variable "rds_instance_class" {
+  description = "Instance size class for RDS PostgreSQL database"
+  type        = string
+  default     = "db.t3.micro"
 }
