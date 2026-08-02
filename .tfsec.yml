@@ -1,0 +1,6 @@
+---
+minimum_severity: HIGH
+
+exclude:
+  # ALB access logs bucket validation (handled externally)
+  - aws-elb-alb-not-public

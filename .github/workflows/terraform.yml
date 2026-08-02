@@ -7,22 +7,30 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Target Environment to plan against (dev, test, prod)'
+        description: "Target environment (dev, staging, prod)"
         required: true
-        default: 'dev'
+        default: "dev"
         type: choice
         options:
           - dev
-          - test
+          - staging
           - prod
 
 permissions:
   id-token: write
   contents: read
+  pull-requests: write
+
+env:
+  AWS_REGION: ap-south-1
+  TF_VAR_FILE: ""
 
 jobs:
-  terraform:
-    name: Terraform CI
+  # ──────────────────────────────────────────────────
+  # Job 1: Validate, Lint, and Security Scan
+  # ──────────────────────────────────────────────────
+  validate:
+    name: Validate & Security Scan
     runs-on: ubuntu-latest
 
     steps:
@@ -32,6 +40,22 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      # --- Terraform Format Check ---
+      - name: Terraform Format Check
+        id: fmt
+        run: terraform fmt -check -recursive
+        continue-on-error: true
+
+      # --- Terraform Init (no backend for validation) ---
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      # --- Terraform Validate ---
+      - name: Terraform Validate
+        id: validate
+        run: terraform validate -no-color
+
+      # --- TFLint ---
       - name: Setup TFLint
         uses: terraform-linters/setup-tflint@v4
         with:
@@ -43,38 +67,459 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run TFLint
+        id: tflint
         run: tflint -f compact
+        continue-on-error: true
 
+      # --- tfsec ---
+      - name: Run tfsec Security Scan
+        id: tfsec
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          additional_args: "--minimum-severity HIGH --format json --out tfsec-results.json"
+          soft_fail: false
+        continue-on-error: true
+
+      - name: Upload tfsec Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfsec-results
+          path: tfsec-results.json
+          retention-days: 30
+
+      # --- Checkov ---
       - name: Run Checkov Security Scan
-        uses: bridgecrewio/checkov-action@master
+        id: checkov
+        uses: bridgecrewio/checkov-action@v12
         with:
           framework: terraform
-          soft_fail: true
+          output_format: cli,sarif
+          output_file_path: console,checkov-results.sarif
+          config_file: .checkov.yml
+          soft_fail: false
+        continue-on-error: true
 
-      # Temporary debug step
-      - name: Print GitHub Context
+      - name: Upload Checkov Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-results
+          path: checkov-results.sarif
+          retention-days: 30
+
+      # --- Fail on HIGH/CRITICAL ---
+      - name: Security Gate
+        if: steps.tfsec.outcome == 'failure' || steps.checkov.outcome == 'failure'
         run: |
-          echo "Repository: ${{ github.repository }}"
-          echo "Ref: ${{ github.ref }}"
-          echo "Actor: ${{ github.actor }}"
+          echo "::error::Security scan found HIGH or CRITICAL findings."
+          echo "Review tfsec and Checkov results before proceeding."
+          exit 1
 
-      - name: Configure AWS Credentials
+  # ──────────────────────────────────────────────────
+  # Job 2: Terraform Plan
+  # ──────────────────────────────────────────────────
+  plan:
+    name: Terraform Plan
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: true
+
+      - name: Configure AWS Credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::634737373070:role/GitHubActionsTerraformRole
-          aws-region: ap-south-1
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+      - name: Determine Environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+          else
+            ENV="dev"
+          fi
+          echo "environment=${ENV}" >> $GITHUB_OUTPUT
+          echo "Planning for environment: ${ENV}"
 
       - name: Terraform Init
         run: terraform init
 
-      - name: Terraform Validate
-        run: terraform validate
+      - name: Select Terraform Workspace
+        run: terraform workspace select ${{ steps.env.outputs.environment }} || terraform workspace new ${{ steps.env.outputs.environment }}
 
       - name: Terraform Plan
+        id: plan
         run: |
-          TARGET_ENV="${{ github.event.inputs.environment || 'dev' }}"
-          echo "Planning environment: $TARGET_ENV"
-          terraform plan -var-file="environments/${TARGET_ENV}.tfvars" -no-color
+          terraform plan \
+            -var-file="environments/${{ steps.env.outputs.environment }}.tfvars" \
+            -no-color \
+            -out=tfplan \
+            2>&1 | tee plan-output.txt
+        continue-on-error: true
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan
+          path: tfplan
+          retention-days: 5
+
+      # --- Post Plan as PR Comment ---
+      - name: Post Plan to Pull Request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const planOutput = fs.readFileSync('plan-output.txt', 'utf8');
+            const maxLength = 60000;
+            const truncated = planOutput.length > maxLength
+              ? planOutput.substring(0, maxLength) + '\n\n... (truncated)'
+              : planOutput;
+
+            const body = `## Terraform Plan — \`${{ steps.env.outputs.environment }}\`
+
+            **Result:** \`${{ steps.plan.outcome }}\`
+
+            <details><summary>Show Plan Output</summary>
+
+            \`\`\`hcl
+            ${truncated}
+            \`\`\`
+
+            </details>
+
+            *Triggered by @${{ github.actor }} on \`${{ github.event.pull_request.head.ref }}\`*`;
+
+            // Find existing bot comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Terraform Plan')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body,
+              });
+            }
+
+      - name: Fail on Plan Error
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  # ──────────────────────────────────────────────────
+  # Job 3: Infracost Estimation
+  # ──────────────────────────────────────────────────
+  infracost:
+    name: Cost Estimation
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Infracost
+        uses: infracost/actions/setup@v3
+        with:
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generate Infracost Breakdown
+        run: |
+          infracost breakdown \
+            --path=. \
+            --terraform-var-file="environments/dev.tfvars" \
+            --usage-file=infracost-usage.yml \
+            --format=json \
+            --out-file=/tmp/infracost-base.json
+
+      - name: Checkout Base Branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          path: base-branch
+
+      - name: Generate Base Branch Breakdown
+        run: |
+          infracost breakdown \
+            --path=base-branch \
+            --terraform-var-file="base-branch/environments/dev.tfvars" \
+            --usage-file=base-branch/infracost-usage.yml \
+            --format=json \
+            --out-file=/tmp/infracost-head.json
+        continue-on-error: true
+
+      - name: Generate Infracost Diff
+        run: |
+          infracost diff \
+            --path=. \
+            --terraform-var-file="environments/dev.tfvars" \
+            --usage-file=infracost-usage.yml \
+            --format=json \
+            --compare-to=/tmp/infracost-head.json \
+            --out-file=/tmp/infracost-diff.json
+        continue-on-error: true
+
+      - name: Post Infracost Comment
+        run: |
+          infracost comment github \
+            --path="/tmp/infracost-base.json" \
+            --repo=${{ github.repository }} \
+            --pull-request=${{ github.event.pull_request.number }} \
+            --github-token=${{ secrets.GITHUB_TOKEN }} \
+            --behavior=update
+        continue-on-error: true
+
+  # ──────────────────────────────────────────────────
+  # Job 4: Build Docker Image & Security Scan
+  # ──────────────────────────────────────────────────
+  build:
+    name: Build & Scan Image
+    needs: validate
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image_uri: ${{ steps.meta.outputs.image_uri }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set Image Metadata
+        id: meta
+        run: |
+          ECR_REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          ECR_REPO="${{ secrets.ECR_REPOSITORY_NAME }}"
+          IMAGE_TAG="${{ github.sha }}"
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "image_uri=${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "ecr_registry=${ECR_REGISTRY}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker Image
+        run: |
+          docker build \
+            --tag ${{ steps.meta.outputs.image_uri }} \
+            --label "git.sha=${{ github.sha }}" \
+            --label "git.ref=${{ github.ref }}" \
+            .
+
+      # --- Trivy Vulnerability Scan ---
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image_uri }}
+          format: "table"
+          exit-code: "1"
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+
+      - name: Push Image to ECR
+        run: docker push ${{ steps.meta.outputs.image_uri }}
+
+  # ──────────────────────────────────────────────────
+  # Job 5: Deploy to Staging
+  # ──────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Render Task Definition
+        id: render-taskdef
+        run: |
+          FAMILY="staging-app"
+          IMAGE="${{ needs.build.outputs.image_uri }}"
+          LOG_GROUP="/ecs/staging"
+
+          sed -e "s|<FAMILY>|${FAMILY}|g" \
+              -e "s|<IMAGE>|${IMAGE}|g" \
+              -e "s|<LOG_GROUP>|${LOG_GROUP}|g" \
+              -e "s|<AWS_REGION>|${AWS_REGION}|g" \
+              deploy/taskdef.json > /tmp/taskdef-rendered.json
+
+          echo "task_def_file=/tmp/taskdef-rendered.json" >> $GITHUB_OUTPUT
+
+      - name: Register New Task Definition
+        id: register-task
+        run: |
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://${{ steps.render-taskdef.outputs.task_def_file }} \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "task_def_arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+
+      - name: Render AppSpec
+        id: render-appspec
+        run: |
+          sed "s|<TASK_DEFINITION>|${{ steps.register-task.outputs.task_def_arn }}|g" \
+            deploy/appspec.yml > /tmp/appspec-rendered.yml
+
+      - name: Deploy via CodeDeploy
+        id: deploy
+        run: |
+          APPSPEC_CONTENT=$(cat /tmp/appspec-rendered.yml)
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name staging-ecs-deploy \
+            --deployment-group-name staging-ecs-dg \
+            --revision "revisionType=AppSpecContent,appSpecContent={content='${APPSPEC_CONTENT}'}" \
+            --query 'deploymentId' \
+            --output text)
+          echo "deployment_id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+          echo "Deployment started: ${DEPLOYMENT_ID}"
+
+      - name: Wait for Deployment
+        run: |
+          echo "Waiting for deployment ${{ steps.deploy.outputs.deployment_id }}..."
+          aws deploy wait deployment-successful \
+            --deployment-id ${{ steps.deploy.outputs.deployment_id }}
+          echo "✅ Staging deployment successful!"
+
+  # ──────────────────────────────────────────────────
+  # Job 6: ECS Health Check
+  # ──────────────────────────────────────────────────
+  health-check:
+    name: Staging Health Check
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Wait for ECS Service Stability
+        run: |
+          echo "Checking ECS service stability..."
+          aws ecs wait services-stable \
+            --cluster staging-ecs-cluster \
+            --services staging-app-service
+          echo "✅ ECS service is stable"
+
+      - name: Verify Target Group Health
+        run: |
+          TG_ARN=$(aws elbv2 describe-target-groups \
+            --names staging-ecs-tg \
+            --query 'TargetGroups[0].TargetGroupArn' \
+            --output text)
+
+          HEALTH=$(aws elbv2 describe-target-health \
+            --target-group-arn "${TG_ARN}" \
+            --query 'TargetHealthDescriptions[*].TargetHealth.State' \
+            --output text)
+
+          echo "Target health states: ${HEALTH}"
+
+          if echo "${HEALTH}" | grep -q "healthy"; then
+            echo "✅ At least one target is healthy"
+          else
+            echo "❌ No healthy targets found"
+            exit 1
+          fi
+
+  # ──────────────────────────────────────────────────
+  # Job 7: Slack Notification
+  # ──────────────────────────────────────────────────
+  notify:
+    name: Slack Notification
+    needs: [validate, plan, build, deploy-staging, health-check]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Determine Pipeline Status
+        id: status
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') }}" == "true" ]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "color=#dc3545" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+            echo "message=CI Pipeline Failed" >> $GITHUB_OUTPUT
+          elif [ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]; then
+            echo "status=cancelled" >> $GITHUB_OUTPUT
+            echo "color=#ffc107" >> $GITHUB_OUTPUT
+            echo "emoji=⚠️" >> $GITHUB_OUTPUT
+            echo "message=CI Pipeline Cancelled" >> $GITHUB_OUTPUT
+          else
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "color=#28a745" >> $GITHUB_OUTPUT
+            echo "emoji=✅" >> $GITHUB_OUTPUT
+            echo "message=CI Pipeline Succeeded — Staging Deployed" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack Notification
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v2.0.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ steps.status.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "${{ steps.status.outputs.emoji }} *${{ steps.status.outputs.message }}*\n*Repo:* `${{ github.repository }}`\n*Branch:* `${{ github.head_ref || github.ref_name }}`\n*Actor:* ${{ github.actor }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Pipeline>"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }

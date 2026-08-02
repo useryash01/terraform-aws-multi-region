@@ -1,0 +1,308 @@
+name: Terraform CD — Production Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "prod"
+        type: choice
+        options:
+          - staging
+          - prod
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  # ──────────────────────────────────────────────────
+  # Job 1: Build Production Image
+  # ──────────────────────────────────────────────────
+  build:
+    name: Build Production Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image_uri: ${{ steps.meta.outputs.image_uri }}
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set Image Metadata
+        id: meta
+        run: |
+          ECR_REGISTRY="${{ steps.ecr-login.outputs.registry }}"
+          ECR_REPO="${{ secrets.ECR_REPOSITORY_NAME }}"
+          IMAGE_TAG="${{ github.sha }}"
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "image_uri=${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}" >> $GITHUB_OUTPUT
+
+      - name: Build Docker Image
+        run: |
+          docker build \
+            --tag ${{ steps.meta.outputs.image_uri }} \
+            --tag ${{ steps.ecr-login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest \
+            --label "git.sha=${{ github.sha }}" \
+            .
+
+      - name: Run Trivy Vulnerability Scanner
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image_uri }}
+          format: "table"
+          exit-code: "1"
+          severity: "HIGH,CRITICAL"
+          ignore-unfixed: true
+
+      - name: Push Images to ECR
+        run: |
+          docker push ${{ steps.meta.outputs.image_uri }}
+          docker push ${{ steps.ecr-login.outputs.registry }}/${{ secrets.ECR_REPOSITORY_NAME }}:latest
+
+  # ──────────────────────────────────────────────────
+  # Job 2: Terraform Apply to Production
+  # ──────────────────────────────────────────────────
+  terraform-apply:
+    name: Terraform Apply (Production)
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Select Production Workspace
+        run: terraform workspace select prod || terraform workspace new prod
+
+      - name: Terraform Apply
+        run: |
+          terraform apply \
+            -var-file="environments/prod.tfvars" \
+            -auto-approve \
+            -no-color
+
+  # ──────────────────────────────────────────────────
+  # Job 3: Deploy to Production (Manual Approval Gate)
+  # ──────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy to Production
+    needs: [build, terraform-apply]
+    runs-on: ubuntu-latest
+    environment: production  # ← Requires manual approval via GitHub Environment
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Render Task Definition
+        id: render-taskdef
+        run: |
+          FAMILY="prod-app"
+          IMAGE="${{ needs.build.outputs.image_uri }}"
+          LOG_GROUP="/ecs/prod"
+
+          sed -e "s|<FAMILY>|${FAMILY}|g" \
+              -e "s|<IMAGE>|${IMAGE}|g" \
+              -e "s|<LOG_GROUP>|${LOG_GROUP}|g" \
+              -e "s|<AWS_REGION>|${AWS_REGION}|g" \
+              deploy/taskdef.json > /tmp/taskdef-rendered.json
+
+      - name: Register New Task Definition
+        id: register-task
+        run: |
+          TASK_DEF_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file:///tmp/taskdef-rendered.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+          echo "task_def_arn=${TASK_DEF_ARN}" >> $GITHUB_OUTPUT
+
+      - name: Render AppSpec
+        run: |
+          sed "s|<TASK_DEFINITION>|${{ steps.register-task.outputs.task_def_arn }}|g" \
+            deploy/appspec.yml > /tmp/appspec-rendered.yml
+
+      - name: Deploy via CodeDeploy (Blue/Green)
+        id: deploy
+        run: |
+          APPSPEC_CONTENT=$(cat /tmp/appspec-rendered.yml)
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name prod-ecs-deploy \
+            --deployment-group-name prod-ecs-dg \
+            --revision "revisionType=AppSpecContent,appSpecContent={content='${APPSPEC_CONTENT}'}" \
+            --query 'deploymentId' \
+            --output text)
+          echo "deployment_id=${DEPLOYMENT_ID}" >> $GITHUB_OUTPUT
+          echo "🚀 Production deployment started: ${DEPLOYMENT_ID}"
+
+      - name: Wait for Production Deployment
+        run: |
+          echo "Waiting for deployment ${{ steps.deploy.outputs.deployment_id }}..."
+          aws deploy wait deployment-successful \
+            --deployment-id ${{ steps.deploy.outputs.deployment_id }}
+          echo "✅ Production deployment successful!"
+
+  # ──────────────────────────────────────────────────
+  # Job 4: Post-Deploy Health Check
+  # ──────────────────────────────────────────────────
+  health-check:
+    name: Production Health Check
+    needs: deploy-production
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure AWS Credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Wait for ECS Service Stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster prod-ecs-cluster \
+            --services prod-app-service
+          echo "✅ Production ECS service is stable"
+
+      - name: Verify Target Group Health
+        run: |
+          TG_ARN=$(aws elbv2 describe-target-groups \
+            --names prod-ecs-tg \
+            --query 'TargetGroups[0].TargetGroupArn' \
+            --output text)
+
+          HEALTH=$(aws elbv2 describe-target-health \
+            --target-group-arn "${TG_ARN}" \
+            --query 'TargetHealthDescriptions[*].TargetHealth.State' \
+            --output text)
+
+          echo "Target health states: ${HEALTH}"
+
+          if echo "${HEALTH}" | grep -q "healthy"; then
+            echo "✅ Production targets are healthy"
+          else
+            echo "❌ No healthy production targets"
+            exit 1
+          fi
+
+  # ──────────────────────────────────────────────────
+  # Job 5: Slack Notifications
+  # ──────────────────────────────────────────────────
+  notify:
+    name: Slack Notification
+    needs: [build, deploy-production, health-check]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Determine Deployment Status
+        id: status
+        run: |
+          DEPLOY_RESULT="${{ needs.deploy-production.result }}"
+          HEALTH_RESULT="${{ needs.health-check.result }}"
+
+          if [ "${DEPLOY_RESULT}" == "failure" ]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "color=#dc3545" >> $GITHUB_OUTPUT
+            echo "emoji=❌" >> $GITHUB_OUTPUT
+            echo "message=Production Deployment Failed" >> $GITHUB_OUTPUT
+          elif [ "${HEALTH_RESULT}" == "failure" ]; then
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "color=#dc3545" >> $GITHUB_OUTPUT
+            echo "emoji=🔄" >> $GITHUB_OUTPUT
+            echo "message=Production Deployment Failed — Rollback Initiated" >> $GITHUB_OUTPUT
+          elif [ "${DEPLOY_RESULT}" == "success" ] && [ "${HEALTH_RESULT}" == "success" ]; then
+            echo "status=success" >> $GITHUB_OUTPUT
+            echo "color=#28a745" >> $GITHUB_OUTPUT
+            echo "emoji=🚀" >> $GITHUB_OUTPUT
+            echo "message=Production Deployment Successful" >> $GITHUB_OUTPUT
+          else
+            echo "status=unknown" >> $GITHUB_OUTPUT
+            echo "color=#ffc107" >> $GITHUB_OUTPUT
+            echo "emoji=⚠️" >> $GITHUB_OUTPUT
+            echo "message=Production Deployment Status Unknown" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Send Slack Notification
+        if: env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v2.0.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "${{ steps.status.outputs.color }}",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "${{ steps.status.outputs.emoji }} *${{ steps.status.outputs.message }}*\n*Repo:* `${{ github.repository }}`\n*Branch:* `${{ github.ref_name }}`\n*Commit:* `${{ github.sha }}`\n*Actor:* ${{ github.actor }}\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Pipeline>"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+
+      - name: Send Rollback Notification
+        if: needs.health-check.result == 'failure' && env.SLACK_WEBHOOK_URL != ''
+        uses: slackapi/slack-github-action@v2.0.0
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          payload: |
+            {
+              "attachments": [
+                {
+                  "color": "#dc3545",
+                  "blocks": [
+                    {
+                      "type": "section",
+                      "text": {
+                        "type": "mrkdwn",
+                        "text": "🔄 *Rollback Completed*\nAutomatic rollback triggered due to failed health checks.\n*Repo:* `${{ github.repository }}`\n*Run:* <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|View Details>"
+                      }
+                    }
+                  ]
+                }
+              ]
+            }

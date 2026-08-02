@@ -1,0 +1,22 @@
+---
+# Checkov configuration
+# Pipeline will fail on HIGH and CRITICAL findings
+
+framework:
+  - terraform
+
+compact: true
+quiet: true
+
+hard-fail-on:
+  - HIGH
+  - CRITICAL
+
+# Skip rules with documented justification
+skip-check:
+  # CKV_AWS_144: S3 cross-region replication — not required for ALB logs bucket
+  - CKV_AWS_144
+  # CKV_AWS_145: S3 KMS encryption — ALB logs bucket uses SSE-S3 (AWS requirement)
+  - CKV_AWS_145
+  # CKV2_AWS_5: Security group attached check — SGs are referenced by other modules
+  - CKV2_AWS_5

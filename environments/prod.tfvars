@@ -23,6 +23,11 @@ ecs_desired_capacity = 2
 ecs_max_size         = 4
 ecs_min_size         = 2
 
+# --- ECS Auto Scaling ---
+ecs_min_tasks        = 2
+ecs_max_tasks        = 6
+ecs_cpu_target_value = 70
+
 # --- RDS Capacity ---
 rds_instance_class = "db.m5.large"
 

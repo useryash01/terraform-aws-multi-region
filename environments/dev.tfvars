@@ -23,6 +23,11 @@ ecs_desired_capacity = 1
 ecs_max_size         = 2
 ecs_min_size         = 1
 
+# --- ECS Auto Scaling ---
+ecs_min_tasks        = 1
+ecs_max_tasks        = 2
+ecs_cpu_target_value = 70
+
 # --- RDS Capacity ---
 rds_instance_class = "db.t3.micro"
 

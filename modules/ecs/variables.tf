@@ -58,3 +58,39 @@ variable "logs_kms_key_id" {
   type        = string
   default     = null
 }
+
+# --- Container Configuration ---
+
+variable "container_image" {
+  description = "Docker image for the ECS task definition (default: nginx:latest for bootstrap)"
+  type        = string
+  default     = "nginx:latest"
+}
+
+# --- ECS Service Auto Scaling ---
+
+variable "ecs_min_tasks" {
+  description = "Minimum number of ECS tasks (auto scaling lower bound)"
+  type        = number
+  default     = 2
+}
+
+variable "ecs_max_tasks" {
+  description = "Maximum number of ECS tasks (auto scaling upper bound)"
+  type        = number
+  default     = 6
+}
+
+variable "ecs_cpu_target_value" {
+  description = "Target CPU utilization percentage for auto scaling"
+  type        = number
+  default     = 70
+}
+
+# --- Logging ---
+
+variable "log_retention_days" {
+  description = "CloudWatch log group retention period in days"
+  type        = number
+  default     = 30
+}

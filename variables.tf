@@ -77,7 +77,7 @@ variable "enable_nat_gateway_secondary" {
   default     = false
 }
 
-# --- ECS Parameters ---
+# --- ECS EC2 Host Parameters ---
 variable "ecs_instance_type" {
   description = "EC2 instance size for the ECS cluster hosts"
   type        = string
@@ -100,6 +100,25 @@ variable "ecs_min_size" {
   description = "Minimum size of ECS host ASG scaling bounds"
   type        = number
   default     = 2
+}
+
+# --- ECS Service Auto Scaling (Phase 4) ---
+variable "ecs_min_tasks" {
+  description = "Minimum number of ECS tasks for auto scaling"
+  type        = number
+  default     = 2
+}
+
+variable "ecs_max_tasks" {
+  description = "Maximum number of ECS tasks for auto scaling"
+  type        = number
+  default     = 6
+}
+
+variable "ecs_cpu_target_value" {
+  description = "Target CPU utilization percentage for ECS auto scaling"
+  type        = number
+  default     = 70
 }
 
 # --- RDS Parameters ---

@@ -68,6 +68,11 @@ module "ecs" {
   max_size         = var.ecs_max_size
   min_size         = var.ecs_min_size
 
+  # --- Auto Scaling (Phase 4) ---
+  ecs_min_tasks        = var.ecs_min_tasks
+  ecs_max_tasks        = var.ecs_max_tasks
+  ecs_cpu_target_value = var.ecs_cpu_target_value
+
   environment = var.environment
   common_tags = var.common_tags
 }
@@ -81,6 +86,26 @@ module "rds" {
   private_subnet_2_id = module.networking.private_subnet_2_id
   instance_class      = var.rds_instance_class
   rds_kms_key_id      = var.rds_kms_key_id
+
+  environment = var.environment
+  common_tags = var.common_tags
+}
+
+# --- CodeDeploy for ECS Blue/Green Deployment (Phase 3) ---
+
+module "codedeploy" {
+  source = "./modules/codedeploy"
+
+  ecs_cluster_name = module.ecs.ecs_cluster_name
+  ecs_service_name = module.ecs.ecs_service_name
+
+  production_listener_arn = module.alb.https_listener_arn
+  test_listener_arn       = module.alb.test_listener_arn
+
+  blue_target_group_name       = module.alb.target_group_name
+  green_target_group_name      = module.alb.green_target_group_name
+  blue_target_group_arn_suffix = module.alb.target_group_arn_suffix
+  alb_arn_suffix               = module.alb.alb_arn_suffix
 
   environment = var.environment
   common_tags = var.common_tags

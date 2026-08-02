@@ -1,0 +1,17 @@
+# Code Owners for Terraform AWS Multi-Region Infrastructure
+# Changes to these paths require review from the specified teams/users.
+
+# Infrastructure changes require DevOps team review
+*.tf          @devops-team
+*.tfvars      @devops-team
+
+# CI/CD pipeline changes require DevOps team review
+.github/      @devops-team
+
+# Security configuration changes require security review
+.tfsec.yml    @devops-team @security-team
+.checkov.yml  @devops-team @security-team
+
+# Docker changes require DevOps review
+Dockerfile    @devops-team
+docker/       @devops-team

@@ -37,3 +37,5 @@ override.tf.json
 .env
 .env.*
 
+# Rendered deploy artifacts (generated at CI/CD runtime)
+deploy/*-rendered.*

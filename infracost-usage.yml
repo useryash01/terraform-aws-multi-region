@@ -1,0 +1,20 @@
+---
+# Infracost usage-based cost estimation
+# See: https://www.infracost.io/docs/features/usage_based_resources/
+version: 0.1
+
+resource_type_default_usage:
+  aws_nat_gateway:
+    monthly_gb_data_processed: 10
+
+  aws_cloudwatch_log_group:
+    monthly_data_ingested_gb: 1
+    storage_gb: 5
+
+  aws_db_instance:
+    monthly_additional_storage_gb: 0
+
+  aws_lb:
+    monthly_data_processed_gb: 10
+    new_connections: 100000
+    active_connections: 1000

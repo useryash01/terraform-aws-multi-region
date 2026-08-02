@@ -1,4 +1,4 @@
-environment = "test"
+environment = "staging"
 aws_region  = "ap-south-1"
 
 # --- Networking Primary ---
@@ -10,11 +10,11 @@ private_subnet_2_primary   = "10.20.4.0/24"
 enable_nat_gateway_primary = true
 
 # --- Networking Secondary ---
-vpc_cidr_secondary           = "172.16.0.0/16"
-public_subnet_1_secondary    = "172.16.1.0/24"
-public_subnet_2_secondary    = "172.16.2.0/24"
-private_subnet_1_secondary   = "172.16.3.0/24"
-private_subnet_2_secondary   = "172.16.4.0/24"
+vpc_cidr_secondary           = "172.17.0.0/16"
+public_subnet_1_secondary    = "172.17.1.0/24"
+public_subnet_2_secondary    = "172.17.2.0/24"
+private_subnet_1_secondary   = "172.17.3.0/24"
+private_subnet_2_secondary   = "172.17.4.0/24"
 enable_nat_gateway_secondary = false
 
 # --- ECS Capacity ---
@@ -33,6 +33,6 @@ rds_instance_class = "db.t3.micro"
 
 # --- Tags ---
 common_tags = {
-  Environment = "test"
+  Environment = "staging"
   ManagedBy   = "Terraform"
 }
