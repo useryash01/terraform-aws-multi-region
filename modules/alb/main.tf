@@ -17,10 +17,8 @@ resource "aws_lb" "main" {
   drop_invalid_header_fields = true
 
   access_logs {
-    bucket  = var.alb_logs_bucket
-    prefix  = "${var.environment}-alb"
-    enabled = true
-  }
+  enabled = false
+}
 
   tags = merge(var.common_tags, {
     Name = "${var.environment}-alb"
